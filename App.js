@@ -24,7 +24,6 @@ import {
   Text,
   TextInput,
   View,
-  useWindowDimensions,
   Share,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -171,6 +170,9 @@ const REVENUECAT_CONFIG = {
   offeringId: "default",
 };
 
+const PRIVACY_POLICY_URL = "https://sites.google.com/view/ichinginsightspp/home";
+const TERMS_AND_CONDITIONS_URL = "https://sites.google.com/view/ai-ching-insightstc/home";
+
 // 🎨 Design tokens
 const palette = {
   parchmentA: "#FAF7ED",
@@ -213,8 +215,6 @@ const GUIDANCE_MESSAGES = {
     "Your journal keeps all your readings in one place. Revisit past casts, follow your progress, and record personal notes or reflections. Upgrade for AI Ching to provide personalised interpretations and summaries tailored to your question and situation.",
   Library:
     "Explore all 64 hexagrams. Tap any hexagram to learn its core themes and wisdom.",
-  Insights:
-    "Track reading streaks, frequently cast hexagrams, and your activity over time.",
 };
 
 const screenTopPadding = Platform.select({
@@ -736,763 +736,6 @@ export function getHexagramNameByNumber(hexagrams, number) {
   return match ? match.name : null;
 }
 
-// 📈 Insights rebuilt
-const monthAbbrevs = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const weekdayAbbrevs = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-let MotionView = Animated.View;
-try {
-  const { MotiView } = require("moti");
-  if (MotiView) {
-    MotionView = MotiView;
-  }
-} catch (error) {
-  // Fallback gracefully to Animated.View
-}
-
-const CARD_ANIMATION = {
-  from: { opacity: 0, translateY: 16 },
-  animate: { opacity: 1, translateY: 0 },
-};
-
-const isMotionComponent = MotionView !== Animated.View;
-const motionProps = (delay = 0) =>
-  isMotionComponent
-    ? {
-        from: CARD_ANIMATION.from,
-        animate: CARD_ANIMATION.animate,
-        transition: { type: "timing", duration: 600, delay },
-      }
-    : {};
-
-function useAnimatedCounter(value, loading) {
-  const animatedValue = useRef(new Animated.Value(0)).current;
-  const [display, setDisplay] = useState(0);
-
-  useEffect(() => {
-    const listener = animatedValue.addListener(({ value: v }) => {
-      setDisplay(Math.round(v));
-    });
-    return () => {
-      animatedValue.removeListener(listener);
-    };
-  }, [animatedValue]);
-
-  useEffect(() => {
-    if (loading) {
-      animatedValue.stopAnimation();
-      animatedValue.setValue(0);
-      setDisplay(0);
-      return;
-    }
-    Animated.timing(animatedValue, {
-      toValue: typeof value === "number" ? value : 0,
-      duration: 600,
-      useNativeDriver: false,
-    }).start();
-  }, [animatedValue, loading, value]);
-
-  return display;
-}
-
-function ShimmerPlaceholder({ height, style }) {
-  const shimmer = useRef(new Animated.Value(0.3)).current;
-
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(shimmer, {
-          toValue: 0.7,
-          duration: 800,
-          useNativeDriver: false,
-        }),
-        Animated.timing(shimmer, {
-          toValue: 0.3,
-          duration: 800,
-          useNativeDriver: false,
-        }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [shimmer]);
-
-  return (
-    <Animated.View
-      style={[
-        {
-          height,
-          borderRadius: theme.radius,
-          backgroundColor: palette.card,
-          opacity: shimmer,
-        },
-        style,
-      ]}
-    />
-  );
-}
-
-const formatCount = (value, noun) => {
-  const safe = Number(value) || 0;
-  const pluralized = safe === 1 ? noun : `${noun}s`;
-  return `${safe} ${pluralized}`;
-};
-
-const dateKey = (date) => {
-  const copy = new Date(date);
-  copy.setHours(0, 0, 0, 0);
-  const m = `${copy.getMonth() + 1}`.padStart(2, "0");
-  const d = `${copy.getDate()}`.padStart(2, "0");
-  return `${copy.getFullYear()}-${m}-${d}`;
-};
-
-const weekdayMostLabel = (key) => {
-  const index = weekdayAbbrevs.indexOf(key);
-  if (index === -1) return key;
-  return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][index];
-};
-
-function computeStreaks(entries) {
-  if (!Array.isArray(entries) || !entries.length) {
-    return { current: 0, longest: 0 };
-  }
-  const dateSet = new Set(entries.map((entry) => dateKey(entry.createdAt || entry.created_at || entry.date)));
-
-  let current = 0;
-  const cursor = new Date();
-  while (dateSet.has(dateKey(cursor))) {
-    current += 1;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  const sortedDates = Array.from(dateSet)
-    .map((value) => new Date(`${value}T00:00:00`))
-    .sort((a, b) => a - b);
-  let longest = 0;
-  let run = 0;
-  let previous = null;
-  sortedDates.forEach((date) => {
-    if (!previous) {
-      run = 1;
-    } else {
-      const diffDays = (date - previous) / (1000 * 60 * 60 * 24);
-      if (diffDays === 1) {
-        run += 1;
-      } else {
-        run = 1;
-      }
-    }
-    longest = Math.max(longest, run);
-    previous = date;
-  });
-
-  return { current, longest };
-}
-
-function useInsightsData() {
-  const { entries, loading: journalLoading } = useJournal();
-  const [hexagrams, setHexagrams] = useState([]);
-  const [hexagramsLoading, setHexagramsLoading] = useState(true);
-  const [warning, setWarning] = useState(null);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const loaded = await loadHexagrams();
-        if (active) setHexagrams(loaded);
-      } catch (error) {
-        console.log("Hexagram load error:", error?.message || error);
-        if (active) setWarning("Showing recent data");
-      } finally {
-        if (active) setHexagramsLoading(false);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const safeEntries = useMemo(() => {
-    return (entries || []).filter((entry) => entry && entry.createdAt);
-  }, [entries]);
-
-  const now = new Date();
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(now.getDate() - 6);
-  const startOfYear = new Date(now.getFullYear(), 0, 1);
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-  const streaks = useMemo(() => computeStreaks(safeEntries), [safeEntries]);
-
-  const aggregates = useMemo(() => {
-    const monthMap = new Map();
-    const weekdayMap = new Map();
-    const hexagramCounts = new Map();
-    let todayCount = 0;
-    let weekCount = 0;
-    let monthCount = 0;
-    let yearCount = 0;
-
-    safeEntries.forEach((entry) => {
-      const created = new Date(entry.createdAt);
-      const key = `${created.getFullYear()}-${created.getMonth()}`;
-      const monthLabel = monthAbbrevs[created.getMonth()] || "";
-      const weekdayLabel = weekdayAbbrevs[created.getDay()] || "";
-
-      if (!monthMap.has(key)) {
-        monthMap.set(key, { month: monthLabel, year: created.getFullYear(), readings: 0 });
-      }
-      monthMap.get(key).readings += 1;
-
-      const weekdayKey = weekdayLabel || created.getDay();
-      weekdayMap.set(weekdayKey, (weekdayMap.get(weekdayKey) || 0) + 1);
-
-      const todayKey = dateKey(now);
-      if (dateKey(created) === todayKey) todayCount += 1;
-      if (created >= sevenDaysAgo && created <= now) weekCount += 1;
-      if (created >= startOfMonth) monthCount += 1;
-      if (created >= startOfYear) yearCount += 1;
-
-      const hexNum = entry?.primary?.number;
-      if (hexNum != null && !Number.isNaN(Number(hexNum))) {
-        const parsed = Number(hexNum);
-        hexagramCounts.set(parsed, (hexagramCounts.get(parsed) || 0) + 1);
-      }
-    });
-
-    const monthlyActivity = [];
-    for (let i = 11; i >= 0; i -= 1) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${date.getFullYear()}-${date.getMonth()}`;
-      const fromMap = monthMap.get(key);
-      monthlyActivity.push({
-        key,
-        month: monthAbbrevs[date.getMonth()],
-        year: date.getFullYear(),
-        readings: fromMap?.readings || 0,
-      });
-    }
-
-    const mostDrawn = Array.from(hexagramCounts.entries())
-      .map(([number, total]) => ({ number, total }))
-      .sort((a, b) => b.total - a.total)[0] || null;
-
-    const distinctHexagrams = hexagramCounts.size;
-
-    const totalReadings = safeEntries.length;
-
-    const weeklyPattern = Array.from(weekdayMap.entries())
-      .map(([weekday, readings]) => ({ weekday, readings }))
-      .sort((a, b) => {
-        return weekdayAbbrevs.indexOf(a.weekday) - weekdayAbbrevs.indexOf(b.weekday);
-      });
-
-    const mostActiveMonth = monthlyActivity.reduce(
-      (acc, entry) => {
-        if ((entry.readings || 0) > (acc?.readings || 0)) return entry;
-        return acc;
-      },
-      { month: null, readings: 0 }
-    );
-
-    return {
-      monthlyActivity,
-      weeklyPattern,
-      cadence: {
-        today: todayCount,
-        week: weekCount,
-        month: monthCount,
-        year: yearCount,
-        total: totalReadings,
-      },
-      mostDrawn,
-      distinctHexagrams,
-      totalReadings,
-      mostActiveMonth,
-    };
-  }, [safeEntries, now, sevenDaysAgo, startOfMonth, startOfYear]);
-
-  const topHexagrams = useMemo(() => {
-    const counts = new Map();
-    safeEntries.forEach((entry) => {
-      const hexNum = entry?.primary?.number;
-      if (hexNum == null) return;
-      const parsed = Number(hexNum);
-      if (Number.isNaN(parsed)) return;
-      counts.set(parsed, (counts.get(parsed) || 0) + 1);
-    });
-    return Array.from(counts.entries())
-      .map(([number, total]) => ({ number, total }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 5)
-      .map((item) => ({
-        ...item,
-        name: getHexagramNameByNumber(hexagrams, item.number),
-      }));
-  }, [hexagrams, safeEntries]);
-
-  const monthlyReadingsLastYear = aggregates.monthlyActivity.reduce(
-    (sum, entry) => sum + (entry.readings || 0),
-    0
-  );
-
-  const weeklyMostActive = aggregates.weeklyPattern.reduce(
-    (acc, entry) => {
-      if ((entry?.readings || 0) > (acc?.readings || 0)) return entry;
-      return acc;
-    },
-    { weekday: null, readings: 0 }
-  );
-
-  const narrativeLines = [];
-  if (monthlyReadingsLastYear > 0) {
-    narrativeLines.push(`You cast ${monthlyReadingsLastYear} readings over the last 12 months.`);
-  }
-  if (aggregates.mostActiveMonth?.month) {
-    narrativeLines.push(`Your most active month was ${aggregates.mostActiveMonth.month}.`);
-  }
-  if (weeklyMostActive?.weekday) {
-    const label = weekdayMostLabel(weeklyMostActive.weekday);
-    narrativeLines.push(`You tend to read most often on ${label}s.`);
-  }
-  if (!narrativeLines.length) {
-    narrativeLines.push("Complete a few readings to reveal your patterns.");
-  }
-
-  const firstRecorded = aggregates.monthlyActivity.find((item) => (item?.readings || 0) > 0);
-
-  const milestones = {
-    firstMonth: firstRecorded?.month || "-",
-    longestStreak: streaks.longest || 0,
-    mostActiveMonth: aggregates.mostActiveMonth?.month || "-",
-    lifetimeReadings: aggregates.totalReadings,
-  };
-
-  const summary = {
-    totalReadings: aggregates.totalReadings,
-    distinctHexagrams: aggregates.distinctHexagrams,
-    mostDrawn: aggregates.mostDrawn,
-    streak: streaks.current,
-  };
-
-  const cadence = aggregates.cadence;
-
-  return {
-    hexagrams,
-    loading: journalLoading || hexagramsLoading,
-    warning,
-    summary,
-    cadence,
-    narrativeLines,
-    topHexagrams,
-    monthlyActivity: aggregates.monthlyActivity,
-    milestones,
-    weeklyPattern: aggregates.weeklyPattern,
-  };
-}
-
-function SummaryMetricCard({ title, subtitle, value, loading, delay = 0 }) {
-  const displayValue = useAnimatedCounter(value, loading);
-  return (
-    <MotionView style={[stylesInsights.card, stylesInsights.summaryCard]} {...motionProps(delay)}>
-      <Text style={stylesInsights.cardTitle}>{title}</Text>
-      {subtitle ? <Text style={stylesInsights.cardSubtitle}>{subtitle}</Text> : null}
-      {loading ? (
-        <ShimmerPlaceholder height={32} style={stylesInsights.shimmerLarge} />
-      ) : (
-        <Text style={stylesInsights.metricValue}>{value == null ? "-" : displayValue}</Text>
-      )}
-    </MotionView>
-  );
-}
-
-function CadenceCard({ cadence, loading }) {
-  const items = [
-    { label: "Today", value: cadence.today },
-    { label: "This week", value: cadence.week },
-    { label: "This month", value: cadence.month },
-    { label: "This year", value: cadence.year },
-    { label: "Total", value: cadence.total },
-  ];
-  return (
-    <MotionView style={stylesInsights.card} {...motionProps(80)}>
-      <Text style={stylesInsights.cardTitle}>Reading cadence</Text>
-      {items.map((item, index) => {
-        const displayValue = useAnimatedCounter(item.value, loading);
-        return (
-          <View
-            key={item.label}
-            style={[stylesInsights.rowBetween, index !== items.length - 1 && stylesInsights.rowDivider]}
-          >
-            <Text style={stylesInsights.rowLabel}>{item.label}</Text>
-            {loading ? (
-              <ShimmerPlaceholder height={16} style={stylesInsights.shimmerSmall} />
-            ) : (
-              <Text style={stylesInsights.rowValue}>{displayValue}</Text>
-            )}
-          </View>
-        );
-      })}
-    </MotionView>
-  );
-}
-
-function NarrativeCard({ lines, loading }) {
-  return (
-    <MotionView style={stylesInsights.card} {...motionProps(120)}>
-      <Text style={stylesInsights.cardTitle}>Your Reading Patterns</Text>
-      <View style={stylesInsights.paragraphStack}>
-        {loading
-          ? [0, 1, 2].map((index) => (
-              <ShimmerPlaceholder
-                key={`narrative-${index}`}
-                height={18}
-                style={stylesInsights.paragraphShimmer}
-              />
-            ))
-          : lines.map((line, index) => (
-              <Text key={`pattern-${index}`} style={stylesInsights.paragraphText}>
-                {line}
-              </Text>
-            ))}
-      </View>
-    </MotionView>
-  );
-}
-
-function TopHexagramsCard({ data, loading }) {
-  return (
-    <MotionView style={stylesInsights.card} {...motionProps(160)}>
-      <Text style={stylesInsights.cardTitle}>Top Hexagrams</Text>
-      {loading ? (
-        <View>
-          {[0, 1, 2, 3, 4].map((index) => (
-            <ShimmerPlaceholder key={`top-${index}`} height={18} style={stylesInsights.listShimmer} />
-          ))}
-        </View>
-      ) : data.length ? (
-        <View style={stylesInsights.listContainer}>
-          {data.map((item, index) => (
-            <View key={`${item.number}-${index}`} style={stylesInsights.listRow}>
-              <Text style={stylesInsights.listIndex}>{index + 1}.</Text>
-              <View style={stylesInsights.listContent}>
-                <Text style={stylesInsights.listLabel}>
-                  {`Hexagram ${item.number}`}
-                  {item.name ? ` — ${item.name}` : ""}
-                </Text>
-                <Text style={stylesInsights.listValue}>{formatCount(item.total, "time")}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
-      ) : (
-        <Text style={stylesInsights.emptyText}>No readings yet. Your top hexagrams will appear here.</Text>
-      )}
-    </MotionView>
-  );
-}
-
-function MonthlyActivityCard({ data, loading }) {
-  return (
-    <MotionView style={stylesInsights.card} {...motionProps(200)}>
-      <Text style={stylesInsights.cardTitle}>Monthly Activity (Past Year)</Text>
-      <FlatList
-        data={data}
-        keyExtractor={(item) => item.key}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={stylesInsights.monthScroller}
-        renderItem={({ item }) =>
-          loading ? (
-            <ShimmerPlaceholder height={38} style={stylesInsights.monthShimmer} />
-          ) : (
-            <View style={stylesInsights.monthBadge}>
-              <Text style={stylesInsights.monthLabel}>{item.month}</Text>
-              <View style={stylesInsights.monthPill}>
-                <Text style={stylesInsights.monthValue}>{item.readings || 0}</Text>
-              </View>
-            </View>
-          )
-        }
-      />
-    </MotionView>
-  );
-}
-
-function MilestonesCard({ milestones, loading }) {
-  const items = [
-    { icon: "📘", label: "First recorded reading", value: milestones.firstMonth || "-" },
-    { icon: "🔥", label: "Longest streak", value: milestones.longestStreak ? `${milestones.longestStreak} days` : "Not started" },
-    { icon: "⭐", label: "Most active month", value: milestones.mostActiveMonth || "-" },
-    { icon: "🌕", label: "Lifetime readings", value: milestones.lifetimeReadings || 0 },
-  ];
-
-  return (
-    <MotionView style={stylesInsights.card} {...motionProps(240)}>
-      <Text style={stylesInsights.cardTitle}>Milestones</Text>
-      <View style={stylesInsights.milestoneGrid}>
-        {loading
-          ? [0, 1, 2, 3].map((index) => (
-              <ShimmerPlaceholder
-                key={`milestone-${index}`}
-                height={60}
-                style={stylesInsights.milestoneShimmer}
-              />
-            ))
-          : items.map((item) => (
-              <View key={item.label} style={stylesInsights.milestoneBadge}>
-                <Text style={stylesInsights.milestoneIcon}>{item.icon}</Text>
-                <View style={stylesInsights.milestoneTextGroup}>
-                  <Text style={stylesInsights.milestoneLabel}>{item.label}</Text>
-                  <Text style={stylesInsights.milestoneValue}>{item.value}</Text>
-                </View>
-              </View>
-            ))}
-      </View>
-    </MotionView>
-  );
-}
-
-function InsightsOverviewScreen({ navigation }) {
-  const { width } = useWindowDimensions();
-  const { isPremium: premiumMember } = useAuth();
-  const { visible, closeGuidance } = useGuidanceOnce("hasSeenGuidance_Insights");
-
-  const {
-    summary,
-    cadence,
-    narrativeLines,
-    topHexagrams,
-    monthlyActivity,
-    milestones,
-    loading,
-    warning,
-  } = useInsightsData();
-
-  const columns = width < 360 ? 1 : 2;
-
-  const summaryCards = [
-    {
-      title: "Total Readings",
-      value: summary.totalReadings,
-      loading,
-      delay: 40,
-    },
-    {
-      title: "Most-Drawn Hexagram",
-      subtitle: summary.mostDrawn
-        ? `Hexagram ${summary.mostDrawn.number}${summary.mostDrawn.total ? ` — ${formatCount(summary.mostDrawn.total, "time")}` : ""}`
-        : "",
-      value: summary.mostDrawn ? summary.mostDrawn.number : 0,
-      loading,
-      delay: 80,
-    },
-    {
-      title: "Reading Streak",
-      subtitle: "Consecutive days",
-      value: summary.streak || 0,
-      loading,
-      delay: 120,
-    },
-    {
-      title: "Distinct Hexagrams",
-      subtitle: "Primary draws",
-      value: summary.distinctHexagrams || 0,
-      loading,
-      delay: 160,
-    },
-  ];
-
-  const summaryRows = [];
-  for (let i = 0; i < summaryCards.length; i += columns) {
-    summaryRows.push(summaryCards.slice(i, i + columns));
-  }
-
-  const handleGuidanceLearnMore = useCallback(() => {
-    closeGuidance();
-    navigation.navigate("Library");
-  }, [closeGuidance, navigation]);
-
-  const header = (
-    <View style={stylesInsights.header}>
-      <Text style={stylesInsights.screenTitle}>Insight Overview</Text>
-      <Text style={stylesInsights.screenSubtitle}>A reflective glance at your journey with the I Ching.</Text>
-      {warning ? <Text style={stylesInsights.warningText}>{warning}</Text> : null}
-    </View>
-  );
-
-  const insightsContent = (
-    <ScrollView
-      style={stylesInsights.container}
-      contentContainerStyle={{ paddingBottom: theme.space(4) }}
-      showsVerticalScrollIndicator={false}
-    >
-      {header}
-
-      <View style={stylesInsights.summaryGrid}>
-        {summaryRows.map((row, rowIndex) => (
-          <View key={`summary-row-${rowIndex}`} style={stylesInsights.summaryRow}>
-            {row.map((card, index) => (
-              <View
-                key={`summary-${card.title}`}
-                style={[
-                  stylesInsights.summaryColumn,
-                  index < row.length - 1 ? stylesInsights.summaryGap : null,
-                ]}
-              >
-                <SummaryMetricCard {...card} />
-              </View>
-            ))}
-          </View>
-        ))}
-      </View>
-
-      <CadenceCard cadence={cadence} loading={loading} />
-      <NarrativeCard lines={narrativeLines} loading={loading} />
-      <TopHexagramsCard data={topHexagrams} loading={loading} />
-      <MonthlyActivityCard data={monthlyActivity} loading={loading} />
-      <MilestonesCard milestones={milestones} loading={loading} />
-    </ScrollView>
-  );
-
-  const paywallCard = (
-    <View style={stylesInsights.paywallCard}>
-      <Text style={stylesInsights.cardTitle}>Insights are a premium feature.</Text>
-      <Text style={stylesInsights.paragraphText}>Upgrade to unlock your reading streaks, top hexagrams, and activity trends.</Text>
-    </View>
-  );
-
-  return (
-    <LinearGradient
-      colors={[palette.parchmentA, palette.parchmentB, palette.parchmentGold]}
-      start={{ x: 0.2, y: 0 }}
-      end={{ x: 0.8, y: 1 }}
-      style={stylesInsights.gradient}
-    >
-      <SafeAreaView style={{ flex: 1 }}>
-        {premiumMember ? insightsContent : (
-          <ScrollView
-            style={stylesInsights.container}
-            contentContainerStyle={{ paddingBottom: theme.space(4) }}
-            showsVerticalScrollIndicator={false}
-          >
-            {header}
-            {paywallCard}
-          </ScrollView>
-        )}
-        <SimpleGuidanceModal
-          visible={visible}
-          onClose={closeGuidance}
-          onLearnMore={handleGuidanceLearnMore}
-          text={GUIDANCE_MESSAGES.Insights}
-        />
-      </SafeAreaView>
-    </LinearGradient>
-  );
-}
-
-const stylesInsights = StyleSheet.create({
-  gradient: { flex: 1 },
-  container: { padding: theme.space(3), paddingTop: screenTopPadding + theme.space(2) },
-  header: { marginBottom: theme.space(2) },
-  screenTitle: { fontFamily: fonts.title, fontSize: 30, color: palette.ink },
-  screenSubtitle: { fontFamily: fonts.body, color: palette.inkMuted, marginTop: theme.space(0.5) },
-  warningText: { fontFamily: fonts.body, color: palette.goldDeep, marginTop: theme.space(0.5) },
-  summaryGrid: { marginTop: theme.space(2), marginBottom: theme.space(3) },
-  summaryRow: { flexDirection: "row", marginBottom: theme.space(1.5) },
-  summaryColumn: { flex: 1 },
-  summaryGap: { marginRight: theme.space(1.5) },
-  card: {
-    backgroundColor: palette.card,
-    borderRadius: theme.radius,
-    borderWidth: 1,
-    borderColor: palette.border,
-    padding: theme.space(2),
-    shadowColor: palette.goldDeep,
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-    marginBottom: theme.space(2),
-  },
-  summaryCard: { minHeight: 130 },
-  cardTitle: { fontFamily: fonts.title, fontSize: 20, color: palette.ink },
-  cardSubtitle: { fontFamily: fonts.body, color: palette.inkMuted, marginTop: 4 },
-  metricValue: { fontFamily: fonts.title, fontSize: 34, color: palette.ink, marginTop: theme.space(1.5) },
-  shimmerLarge: { marginTop: theme.space(1.5), borderRadius: 10 },
-  shimmerSmall: { width: 40, borderRadius: 6 },
-  rowBetween: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: theme.space(0.75),
-  },
-  rowDivider: { borderBottomWidth: 1, borderBottomColor: palette.border },
-  rowLabel: { fontFamily: fonts.body, color: palette.ink },
-  rowValue: { fontFamily: fonts.bodyBold, color: palette.goldDeep },
-  paragraphStack: { gap: theme.space(1), marginTop: theme.space(0.5) },
-  paragraphShimmer: { borderRadius: 8 },
-  paragraphText: { fontFamily: fonts.body, fontSize: 15, color: palette.ink, lineHeight: 22 },
-  listContainer: { marginTop: theme.space(1) },
-  listRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: theme.space(0.75) },
-  listIndex: { fontFamily: fonts.bodyBold, color: palette.ink, marginRight: theme.space(1) },
-  listContent: { flex: 1 },
-  listLabel: { fontFamily: fonts.body, fontSize: 15, color: palette.ink },
-  listValue: { fontFamily: fonts.bodyBold, fontSize: 14, color: palette.goldDeep, marginTop: 2 },
-  listShimmer: { marginBottom: theme.space(1), borderRadius: 8 },
-  emptyText: { fontFamily: fonts.body, color: palette.inkMuted },
-  monthScroller: { paddingVertical: theme.space(0.5) },
-  monthBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: palette.white,
-    borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 14,
-    paddingHorizontal: theme.space(1),
-    paddingVertical: theme.space(0.75),
-    marginRight: theme.space(1),
-    shadowColor: palette.goldDeep,
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  monthLabel: { fontFamily: fonts.bodyBold, color: palette.ink, marginRight: theme.space(0.75) },
-  monthPill: { backgroundColor: palette.goldLight, borderRadius: 12, paddingHorizontal: theme.space(1), paddingVertical: 4 },
-  monthValue: { fontFamily: fonts.bodyBold, color: palette.goldDeep },
-  monthShimmer: { width: 74, borderRadius: 14, marginRight: theme.space(1) },
-  milestoneGrid: { flexDirection: "row", flexWrap: "wrap", gap: theme.space(1) },
-  milestoneBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: palette.white,
-    borderRadius: 14,
-    paddingVertical: theme.space(1),
-    paddingHorizontal: theme.space(1.25),
-    borderWidth: 1,
-    borderColor: palette.border,
-    minWidth: 150,
-    flex: 1,
-  },
-  milestoneIcon: { fontSize: 18, marginRight: theme.space(1) },
-  milestoneTextGroup: { flex: 1 },
-  milestoneLabel: { fontFamily: fonts.body, color: palette.inkMuted, fontSize: 13 },
-  milestoneValue: { fontFamily: fonts.bodyBold, color: palette.ink, fontSize: 15, marginTop: 2 },
-  milestoneShimmer: { borderRadius: 12, minWidth: 150 },
-  paywallCard: {
-    backgroundColor: palette.card,
-    borderRadius: theme.radius,
-    borderWidth: 1,
-    borderColor: palette.border,
-    padding: theme.space(2),
-    shadowColor: palette.goldDeep,
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-  },
-});
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 const JournalStack = createNativeStackNavigator();
@@ -2246,6 +1489,50 @@ function SimpleGuidanceModal({ visible, onClose, onLearnMore, text }) {
   );
 }
 
+function InitialDisclaimerModal({ visible, agreed, onToggleAgreement, onContinue, onOpenLink }) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => {}}>
+      <Pressable style={guidanceStyles.backdrop}>
+        <Pressable style={guidanceStyles.card} onPress={(event) => event.stopPropagation()}>
+          <Text style={guidanceStyles.messageLeft}>
+            This app provides symbolic interpretations of the I Ching for entertainment and personal reflection only.
+          </Text>
+          <Text style={guidanceStyles.messageLeft}>
+            Readings and AI-generated summaries are not predictions and should not be relied upon when making important life decisions.
+          </Text>
+          <Text style={guidanceStyles.messageLeft}>
+            The app does not provide medical, legal, financial, or psychological advice.
+          </Text>
+          <Text style={guidanceStyles.messageLeft}>
+            By continuing you agree to our{" "}
+            <Text style={guidanceStyles.inlineLink} onPress={() => onOpenLink(TERMS_AND_CONDITIONS_URL)}>
+              Terms & Conditions
+            </Text>{" "}
+            and{" "}
+            <Text style={guidanceStyles.inlineLink} onPress={() => onOpenLink(PRIVACY_POLICY_URL)}>
+              Privacy Policy
+            </Text>
+            .
+          </Text>
+
+          <Pressable style={guidanceStyles.agreementRow} onPress={onToggleAgreement}>
+            <View style={[guidanceStyles.checkbox, agreed && guidanceStyles.checkboxChecked]}>
+              {agreed ? <Ionicons name="checkmark" size={14} color={palette.white} /> : null}
+            </View>
+            <Text style={guidanceStyles.agreementText}>
+              I agree to the Terms & Conditions and Privacy Policy
+            </Text>
+          </Pressable>
+
+          <GoldButton full onPress={onContinue} disabled={!agreed}>
+            Continue
+          </GoldButton>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 function HelpButton({ onPress, style }) {
   return (
     <Pressable
@@ -2305,6 +1592,44 @@ const guidanceStyles = StyleSheet.create({
     fontSize: 14,
     textDecorationLine: "underline",
     textAlign: "center",
+  },
+  messageLeft: {
+    fontFamily: fonts.body,
+    fontSize: 15,
+    color: palette.ink,
+    lineHeight: 22,
+    marginBottom: theme.space(1.25),
+  },
+  inlineLink: {
+    fontFamily: fonts.bodyBold,
+    color: palette.goldDeep,
+    textDecorationLine: "underline",
+  },
+  agreementRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: theme.space(1.5),
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: palette.goldDeep,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: theme.space(1),
+    backgroundColor: palette.white,
+  },
+  checkboxChecked: {
+    backgroundColor: palette.goldDeep,
+  },
+  agreementText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    color: palette.ink,
+    fontSize: 14,
+    lineHeight: 20,
   },
   helpButton: {
     alignItems: "center",
@@ -2965,6 +2290,10 @@ function GlowingHexagon() {
 function HomeScreen({ navigation, route }) {
   const [question, setQuestion] = useState("");
   const [menuVisible, setMenuVisible] = useState(false);
+  const [showDisclaimer, setShowDisclaimer] = useState(false);
+  const [hasLoadedDisclaimer, setHasLoadedDisclaimer] = useState(false);
+  const [hasAcceptedDisclaimer, setHasAcceptedDisclaimer] = useState(false);
+  const [disclaimerAgreed, setDisclaimerAgreed] = useState(false);
   const isFocused = useIsFocused();
   const { session, profile, loadingProfile, signOut, refreshProfile } = useAuth();
   const { premiumActive: premiumEntitlementActive, coreActive: coreEntitlementActive } =
@@ -3025,6 +2354,48 @@ function HomeScreen({ navigation, route }) {
   const handleOpenSettings = useCallback(() => closeMenuAndNavigate("Settings"), [closeMenuAndNavigate]);
   const handleOpenPremium = useCallback(() => closeMenuAndNavigate("Premium"), [closeMenuAndNavigate]);
 
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const storedValue = await AsyncStorage.getItem("hasAcceptedDisclaimer");
+        if (!active) return;
+        const accepted = storedValue === "true";
+        setHasAcceptedDisclaimer(accepted);
+        setShowDisclaimer(!accepted);
+      } catch (error) {
+        console.log("Disclaimer flag error:", error?.message || error);
+      } finally {
+        if (active) {
+          setHasLoadedDisclaimer(true);
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleOpenLink = useCallback(async (url) => {
+    const canOpen = await Linking.canOpenURL(url);
+    if (!canOpen) {
+      Alert.alert("Unable to open link", "Please try again later.");
+      return;
+    }
+    await Linking.openURL(url);
+  }, []);
+
+  const handleContinueDisclaimer = useCallback(async () => {
+    if (!disclaimerAgreed) return;
+    try {
+      await AsyncStorage.setItem("hasAcceptedDisclaimer", "true");
+      setHasAcceptedDisclaimer(true);
+      setShowDisclaimer(false);
+    } catch (error) {
+      console.log("Disclaimer persist error:", error?.message || error);
+    }
+  }, [disclaimerAgreed]);
+
   const handleLogout = useCallback(async () => {
     setMenuVisible(false);
     try {
@@ -3037,17 +2408,45 @@ function HomeScreen({ navigation, route }) {
 
   useFocusEffect(
     useCallback(() => {
-      if (guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
+      if (
+        hasLoadedDisclaimer &&
+        hasAcceptedDisclaimer &&
+        guidanceLoaded &&
+        !hasSeenGuidance &&
+        !guidanceVisible
+      ) {
         openGuidance();
       }
-    }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, openGuidance])
+    }, [
+      guidanceLoaded,
+      guidanceVisible,
+      hasAcceptedDisclaimer,
+      hasLoadedDisclaimer,
+      hasSeenGuidance,
+      openGuidance,
+    ])
   );
 
   useEffect(() => {
-    if (isFocused && guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
+    if (
+      isFocused &&
+      hasLoadedDisclaimer &&
+      hasAcceptedDisclaimer &&
+      guidanceLoaded &&
+      !hasSeenGuidance &&
+      !guidanceVisible
+    ) {
       openGuidance();
     }
-  }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, isFocused, openGuidance]);
+  }, [
+    guidanceLoaded,
+    guidanceVisible,
+    hasAcceptedDisclaimer,
+    hasLoadedDisclaimer,
+    hasSeenGuidance,
+    isFocused,
+    openGuidance,
+  ]);
 
   const handleSubmitQuestion = useCallback(() => {
     const trimmed = question?.trim() || null;
@@ -3079,7 +2478,7 @@ function HomeScreen({ navigation, route }) {
             </View>
             <View style={stylesHome.mainContent}>
               <View style={stylesHome.heroBlock}>
-                <Text style={stylesHome.appTitle}>AI Ching Insights</Text>
+                <Text style={stylesHome.appTitle}>I Ching Insights AI</Text>
                 <GlowingHexagon />
                 <Text style={stylesHome.subtitle}>
                   The oracle awaits with quiet truths and timeless wisdom
@@ -3164,8 +2563,15 @@ function HomeScreen({ navigation, route }) {
               </Pressable>
             </Pressable>
           </Modal>
+          <InitialDisclaimerModal
+            visible={showDisclaimer}
+            agreed={disclaimerAgreed}
+            onToggleAgreement={() => setDisclaimerAgreed((prev) => !prev)}
+            onContinue={handleContinueDisclaimer}
+            onOpenLink={handleOpenLink}
+          />
           <SimpleGuidanceModal
-            visible={guidanceVisible}
+            visible={guidanceVisible && !showDisclaimer}
             onClose={closeGuidance}
             onLearnMore={handleGuidanceLearnMore}
             text={GUIDANCE_MESSAGES.Home}
@@ -3336,17 +2742,45 @@ function CastScreen({ route, navigation }) {
 
   useFocusEffect(
     useCallback(() => {
-      if (guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
+      if (
+        hasLoadedDisclaimer &&
+        hasAcceptedDisclaimer &&
+        guidanceLoaded &&
+        !hasSeenGuidance &&
+        !guidanceVisible
+      ) {
         openGuidance();
       }
-    }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, openGuidance])
+    }, [
+      guidanceLoaded,
+      guidanceVisible,
+      hasAcceptedDisclaimer,
+      hasLoadedDisclaimer,
+      hasSeenGuidance,
+      openGuidance,
+    ])
   );
 
   useEffect(() => {
-    if (isFocused && guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
+    if (
+      isFocused &&
+      hasLoadedDisclaimer &&
+      hasAcceptedDisclaimer &&
+      guidanceLoaded &&
+      !hasSeenGuidance &&
+      !guidanceVisible
+    ) {
       openGuidance();
     }
-  }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, isFocused, openGuidance]);
+  }, [
+    guidanceLoaded,
+    guidanceVisible,
+    hasAcceptedDisclaimer,
+    hasLoadedDisclaimer,
+    hasSeenGuidance,
+    isFocused,
+    openGuidance,
+  ]);
 
   useEffect(() => {
     loadHexagrams().then(setAll);
@@ -4104,17 +3538,45 @@ function LibraryScreen({ navigation }) {
 
   useFocusEffect(
     useCallback(() => {
-      if (guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
+      if (
+        hasLoadedDisclaimer &&
+        hasAcceptedDisclaimer &&
+        guidanceLoaded &&
+        !hasSeenGuidance &&
+        !guidanceVisible
+      ) {
         openGuidance();
       }
-    }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, openGuidance])
+    }, [
+      guidanceLoaded,
+      guidanceVisible,
+      hasAcceptedDisclaimer,
+      hasLoadedDisclaimer,
+      hasSeenGuidance,
+      openGuidance,
+    ])
   );
 
   useEffect(() => {
-    if (isFocused && guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
+    if (
+      isFocused &&
+      hasLoadedDisclaimer &&
+      hasAcceptedDisclaimer &&
+      guidanceLoaded &&
+      !hasSeenGuidance &&
+      !guidanceVisible
+    ) {
       openGuidance();
     }
-  }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, isFocused, openGuidance]);
+  }, [
+    guidanceLoaded,
+    guidanceVisible,
+    hasAcceptedDisclaimer,
+    hasLoadedDisclaimer,
+    hasSeenGuidance,
+    isFocused,
+    openGuidance,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -4323,17 +3785,45 @@ function JournalListScreen({ navigation, route }) {
 
   useFocusEffect(
     useCallback(() => {
-      if (guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
+      if (
+        hasLoadedDisclaimer &&
+        hasAcceptedDisclaimer &&
+        guidanceLoaded &&
+        !hasSeenGuidance &&
+        !guidanceVisible
+      ) {
         openGuidance();
       }
-    }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, openGuidance])
+    }, [
+      guidanceLoaded,
+      guidanceVisible,
+      hasAcceptedDisclaimer,
+      hasLoadedDisclaimer,
+      hasSeenGuidance,
+      openGuidance,
+    ])
   );
 
   useEffect(() => {
-    if (isFocused && guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
+    if (
+      isFocused &&
+      hasLoadedDisclaimer &&
+      hasAcceptedDisclaimer &&
+      guidanceLoaded &&
+      !hasSeenGuidance &&
+      !guidanceVisible
+    ) {
       openGuidance();
     }
-  }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, isFocused, openGuidance]);
+  }, [
+    guidanceLoaded,
+    guidanceVisible,
+    hasAcceptedDisclaimer,
+    hasLoadedDisclaimer,
+    hasSeenGuidance,
+    isFocused,
+    openGuidance,
+  ]);
 
   const goHome = () => {
     const tabNav = navigation.getParent();
@@ -5917,7 +5407,7 @@ function SettingsScreen({ navigation }) {
               <View style={stylesSettings.rowDivider} />
               <Pressable
                 onPress={() =>
-                  handleOpenLink("https://sites.google.com/view/ichinginsightspp/home")
+                  handleOpenLink(PRIVACY_POLICY_URL)
                 }
                 style={stylesSettings.row}
               >
@@ -5927,7 +5417,7 @@ function SettingsScreen({ navigation }) {
               <View style={stylesSettings.rowDivider} />
               <Pressable
                 onPress={() =>
-                  handleOpenLink("https://sites.google.com/view/ai-ching-insightstc/home")
+                  handleOpenLink(TERMS_AND_CONDITIONS_URL)
                 }
                 style={stylesSettings.row}
               >
