@@ -173,6 +173,8 @@ const REVENUECAT_CONFIG = {
 
 const PRIVACY_POLICY_URL = "https://sites.google.com/view/ichinginsightspp/home";
 const TERMS_AND_CONDITIONS_URL = "https://sites.google.com/view/ai-ching-insightstc/home";
+const PLAY_STORE_URL =
+  "https://play.google.com/store/apps/details?id=com.cahalliwell.snack94b01a5f1d5b4a8d81b962d4f87049b3&reviewId=0";
 
 // 🎨 Design tokens
 const palette = {
@@ -5176,7 +5178,7 @@ function SettingsScreen({ navigation }) {
 
   const handleRateApp = useCallback(async () => {
     const iosStore = "https://apps.apple.com/app/id000000000";
-    const androidStore = "https://play.google.com/store/apps/details?id=com.example";
+    const androidStore = PLAY_STORE_URL;
     const target = Platform.select({ ios: iosStore, android: androidStore, default: iosStore });
     try {
       if (target) {
@@ -5190,7 +5192,8 @@ function SettingsScreen({ navigation }) {
   const handleShareApp = useCallback(async () => {
     try {
       await Share.share({
-        message: "Explore AI Ching Insights for reflective guidance and journaling. Download now!",
+        message:
+          "I found this great app — check it out:\n\nhttps://play.google.com/store/apps/details?id=com.cahalliwell.snack94b01a5f1d5b4a8d81b962d4f87049b3",
       });
     } catch (error) {
       Alert.alert("Share failed", error?.message || "Please try again.");
