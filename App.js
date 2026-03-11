@@ -2742,45 +2742,17 @@ function CastScreen({ route, navigation }) {
 
   useFocusEffect(
     useCallback(() => {
-      if (
-        hasLoadedDisclaimer &&
-        hasAcceptedDisclaimer &&
-        guidanceLoaded &&
-        !hasSeenGuidance &&
-        !guidanceVisible
-      ) {
+      if (guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
         openGuidance();
       }
-    }, [
-      guidanceLoaded,
-      guidanceVisible,
-      hasAcceptedDisclaimer,
-      hasLoadedDisclaimer,
-      hasSeenGuidance,
-      openGuidance,
-    ])
+    }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, openGuidance])
   );
 
   useEffect(() => {
-    if (
-      isFocused &&
-      hasLoadedDisclaimer &&
-      hasAcceptedDisclaimer &&
-      guidanceLoaded &&
-      !hasSeenGuidance &&
-      !guidanceVisible
-    ) {
+    if (isFocused && guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
       openGuidance();
     }
-  }, [
-    guidanceLoaded,
-    guidanceVisible,
-    hasAcceptedDisclaimer,
-    hasLoadedDisclaimer,
-    hasSeenGuidance,
-    isFocused,
-    openGuidance,
-  ]);
+  }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, isFocused, openGuidance]);
 
   useEffect(() => {
     loadHexagrams().then(setAll);
@@ -3538,45 +3510,17 @@ function LibraryScreen({ navigation }) {
 
   useFocusEffect(
     useCallback(() => {
-      if (
-        hasLoadedDisclaimer &&
-        hasAcceptedDisclaimer &&
-        guidanceLoaded &&
-        !hasSeenGuidance &&
-        !guidanceVisible
-      ) {
+      if (guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
         openGuidance();
       }
-    }, [
-      guidanceLoaded,
-      guidanceVisible,
-      hasAcceptedDisclaimer,
-      hasLoadedDisclaimer,
-      hasSeenGuidance,
-      openGuidance,
-    ])
+    }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, openGuidance])
   );
 
   useEffect(() => {
-    if (
-      isFocused &&
-      hasLoadedDisclaimer &&
-      hasAcceptedDisclaimer &&
-      guidanceLoaded &&
-      !hasSeenGuidance &&
-      !guidanceVisible
-    ) {
+    if (isFocused && guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
       openGuidance();
     }
-  }, [
-    guidanceLoaded,
-    guidanceVisible,
-    hasAcceptedDisclaimer,
-    hasLoadedDisclaimer,
-    hasSeenGuidance,
-    isFocused,
-    openGuidance,
-  ]);
+  }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, isFocused, openGuidance]);
 
   useEffect(() => {
     let active = true;
@@ -3785,45 +3729,17 @@ function JournalListScreen({ navigation, route }) {
 
   useFocusEffect(
     useCallback(() => {
-      if (
-        hasLoadedDisclaimer &&
-        hasAcceptedDisclaimer &&
-        guidanceLoaded &&
-        !hasSeenGuidance &&
-        !guidanceVisible
-      ) {
+      if (guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
         openGuidance();
       }
-    }, [
-      guidanceLoaded,
-      guidanceVisible,
-      hasAcceptedDisclaimer,
-      hasLoadedDisclaimer,
-      hasSeenGuidance,
-      openGuidance,
-    ])
+    }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, openGuidance])
   );
 
   useEffect(() => {
-    if (
-      isFocused &&
-      hasLoadedDisclaimer &&
-      hasAcceptedDisclaimer &&
-      guidanceLoaded &&
-      !hasSeenGuidance &&
-      !guidanceVisible
-    ) {
+    if (isFocused && guidanceLoaded && !hasSeenGuidance && !guidanceVisible) {
       openGuidance();
     }
-  }, [
-    guidanceLoaded,
-    guidanceVisible,
-    hasAcceptedDisclaimer,
-    hasLoadedDisclaimer,
-    hasSeenGuidance,
-    isFocused,
-    openGuidance,
-  ]);
+  }, [guidanceLoaded, guidanceVisible, hasSeenGuidance, isFocused, openGuidance]);
 
   const goHome = () => {
     const tabNav = navigation.getParent();
